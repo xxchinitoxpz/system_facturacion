@@ -16,8 +16,7 @@ class DespatchController extends Controller
     {
         $data = $request->all();
 
-        $company = Company::where('user_id', auth()->id())
-            ->where('ruc', $data['company']['ruc'])
+        $company = Company::where('ruc', $data['company']['ruc'])
             ->firstOrFail();
 
         $sunat = new SunatService();
@@ -43,8 +42,7 @@ class DespatchController extends Controller
 
         $data = $request->all();
 
-        $company = Company::where('user_id', auth()->id())
-            ->where('ruc', $data['company']['ruc'])
+        $company = Company::where('ruc', $data['company']['ruc'])
             ->firstOrFail();
 
         $sunat = new SunatService;
@@ -63,8 +61,7 @@ class DespatchController extends Controller
     {
         $data = $request->all();
 
-        $company = Company::where('user_id', auth()->id())
-            ->where('ruc', $data['company']['ruc'])
+        $company = Company::where('ruc', $data['company']['ruc'])
             ->firstOrFail();
         $sunat = new SunatService;
         $despatch = $sunat->getDespatch($data);

@@ -1381,7 +1381,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('https://dtodomarketlicor.com/api/invoices/send', $sunatJson);
+            ])->post('http://greenter.test/api/invoices/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();
@@ -2071,7 +2071,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('https://dtodomarketlicor.com/api/notes/send', $sunatJson);
+            ])->post('http://greenter.test/api/notes/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();
@@ -2216,7 +2216,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('https://dtodomarketlicor.com/api/notes/send', $sunatJson);
+            ])->post('http://greenter.test/api/notes/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();

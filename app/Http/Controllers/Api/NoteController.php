@@ -26,8 +26,7 @@ class NoteController extends Controller
 
         $data = $request->all();
 
-        $company = Company::where('user_id', auth()->id())
-            ->where('ruc', $data['company']['ruc'])
+        $company = Company::where('ruc', $data['company']['ruc'])
             ->firstOrFail();
 
         $this->setTotales($data);
@@ -58,8 +57,7 @@ class NoteController extends Controller
 
         $data = $request->all();
 
-        $company = Company::where('user_id', auth()->id())
-            ->where('ruc', $data['company']['ruc'])
+        $company = Company::where('ruc', $data['company']['ruc'])
             ->firstOrFail();
 
         $this->setTotales($data);
@@ -87,8 +85,7 @@ class NoteController extends Controller
 
         $data = $request->all();
 
-        $company = Company::where('user_id', auth()->id())
-            ->where('ruc', $data['company']['ruc'])
+        $company = Company::where('ruc', $data['company']['ruc'])
             ->firstOrFail();
 
         $this->setTotales($data);

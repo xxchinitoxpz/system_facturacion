@@ -1375,6 +1375,15 @@ class SaleController extends Controller
             
             // Obtener token JWT de la sesión
             $jwtToken = session('jwt_token');
+
+            Log::info('validarConSunat - request', [
+                'tipo_comprobante' => $request->tipo_comprobante,
+                'sucursal_id' => $request->sucursal_id,
+                'cliente_id' => $request->cliente_id,
+                'cliente_documento' => $request->cliente_documento ?? null,
+                'productos_count' => is_array($request->productos) ? count($request->productos) : null,
+                'total' => $request->total ?? null,
+            ]);
             
             // Enviar a SUNAT para validación
             $response = Http::withHeaders([
@@ -1393,6 +1402,13 @@ class SaleController extends Controller
                         'data' => $data
                     ];
                 } else {
+                    Log::error('validarConSunat - success=false payload', [
+                        'http_status' => $response->status(),
+                        'has_cdrResponse' => isset($data['sunatResponse']['cdrResponse']),
+                        'cdr_code' => $data['sunatResponse']['cdrResponse']['code'] ?? null,
+                        'cdr_description' => $data['sunatResponse']['cdrResponse']['description'] ?? null,
+                        'payload_preview' => substr(json_encode($data), 0, 4000),
+                    ]);
                     // SUNAT respondió pero con error
                     $errorMessage = $data['sunatResponse']['cdrResponse']['description'] ?? 'Error desconocido en SUNAT';
                     return [
@@ -1403,6 +1419,10 @@ class SaleController extends Controller
             } else {
                 // Error en la comunicación con SUNAT
                 $errorData = $response->json();
+                Log::error('validarConSunat - http error', [
+                    'http_status' => $response->status(),
+                    'error_preview' => is_array($errorData) ? substr(json_encode($errorData), 0, 4000) : (string)$response->body(),
+                ]);
                 $errorMessage = $errorData['message'] ?? 'Error de comunicación con SUNAT';
                 return [
                     'success' => false,
@@ -1410,6 +1430,9 @@ class SaleController extends Controller
                 ];
             }
         } catch (\Exception $e) {
+            Log::error('validarConSunat - excepción', [
+                'message' => $e->getMessage()
+            ]);
             return [
                 'success' => false,
                 'error' => 'Excepción: ' . $e->getMessage()

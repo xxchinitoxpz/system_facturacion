@@ -1428,10 +1428,10 @@ class SaleController extends Controller
                         'data' => $data
                     ];
                 } else {
- 		    $cdrDescription = $data['sunatResponse']['cdrResponse']['description'] ?? null;
+                    $cdrDescription = $data['sunatResponse']['cdrResponse']['description'] ?? null;
                     $sunatErrorMessage = $data['sunatResponse']['error']['message'] ?? null;
                     $sunatErrorCode = $data['sunatResponse']['error']['code'] ?? null;
-		    Log::error('validarConSunat - success=false payload', [
+                    Log::error('validarConSunat - success=false payload', [
                         'http_status' => $response->status(),
                         'has_cdrResponse' => isset($data['sunatResponse']['cdrResponse']),
                         'cdr_code' => $data['sunatResponse']['cdrResponse']['code'] ?? null,
@@ -1442,8 +1442,8 @@ class SaleController extends Controller
                         // Nota: el JSON completo puede traer el XML firmado y es enorme; por eso guardamos
                         // el mensaje puntual arriba y dejamos el preview solo como referencia.
                         'payload_preview' => substr(json_encode($data), 0, 2000),
-                    ]);                    
-		    // SUNAT respondió pero con error
+                    ]);
+                    // SUNAT respondió pero con error
                     $errorMessage = $cdrDescription
                         ?? $sunatErrorMessage
                         ?? 'Error desconocido en SUNAT';

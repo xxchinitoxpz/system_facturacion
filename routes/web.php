@@ -21,6 +21,7 @@ use App\Http\Controllers\Web\CashBoxController;
 use App\Http\Controllers\Web\SaleController;
 use App\Http\Controllers\Web\Sale2Controller;
 use App\Http\Controllers\Web\PurchaseController;
+use App\Http\Controllers\Web\SalesReportController;
 
 use Illuminate\Support\Facades\Artisan;
 
@@ -120,6 +121,8 @@ Route::middleware('auth')->group(function () {
     Route::patch('sales/{sale}/anular', [SaleController::class, 'anular'])->name('sales.anular');
     Route::get('sales/{sale}/ticket', [SaleController::class, 'ticket'])->name('sales.ticket');
     Route::post('sales/{sale}/enviar-nota-sunat', [SaleController::class, 'enviarNotaASunat'])->name('sales.enviar-nota-sunat');
+
+    Route::get('reportes/ventas', [SalesReportController::class, 'index'])->name('reports.sales');
 
     // Rutas para venta 2
     Route::get('sales2', [Sale2Controller::class, 'index'])->name('sales2.index');

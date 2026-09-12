@@ -172,15 +172,9 @@ class PermissionSeeder extends Seeder
             
             // Permisos del dashboard
             'ver-dashboard',
-            
-            
-            // ===== AQUÍ PUEDES AGREGAR NUEVOS PERMISOS =====
-            // Ejemplo de nuevos permisos que podrías agregar:
-            // 'ver-facturas',
-            // 'crear-facturas',
-            // 'editar-facturas',
-            // 'eliminar-facturas',
-            // ===============================================
+
+            // Permisos de reportes
+            'ver-reportes',
         ];
 
         // Crear solo los permisos que no existen

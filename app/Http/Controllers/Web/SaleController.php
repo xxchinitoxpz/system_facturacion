@@ -19,6 +19,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Http; // Added for HTTP requests
 use Illuminate\Support\Facades\Storage; // Added for file storage
 use App\Models\DocumentSeries;
+use Illuminate\Validation\ValidationException;
 
 class SaleController extends Controller
 {
@@ -143,6 +144,31 @@ class SaleController extends Controller
 
         // Convertir dividir_pago a boolean antes de validar
         $dividirPago = filter_var($request->input('dividir_pago'), FILTER_VALIDATE_BOOLEAN);
+
+        // Boleta simple: DNI vacío o 00000000 → cliente general; 1-7 dígitos → error
+        if ($request->input('tipo_comprobante') === 'boleta') {
+            $documentoBoleta = trim((string) $request->input('cliente_documento', ''));
+
+            if ($documentoBoleta === '' || $documentoBoleta === '00000000') {
+                $clienteGeneral = Client::where('nro_documento', '00000000')->first();
+
+                if (!$clienteGeneral) {
+                    throw ValidationException::withMessages([
+                        'cliente_documento' => 'No se encontró el cliente general (00000000) para boleta simple.',
+                    ]);
+                }
+
+                $request->merge([
+                    'cliente_id' => (string) $clienteGeneral->id,
+                    'cliente_documento' => '00000000',
+                    'cliente_nombre' => $clienteGeneral->nombre_completo,
+                ]);
+            } elseif (strlen($documentoBoleta) < 8) {
+                throw ValidationException::withMessages([
+                    'cliente_documento' => 'Digite el DNI completo (8 dígitos) o déjelo vacío para boleta simple.',
+                ]);
+            }
+        }
         
         $request->validate([
             'total' => 'required|numeric|min:0',
@@ -1375,13 +1401,22 @@ class SaleController extends Controller
             
             // Obtener token JWT de la sesión
             $jwtToken = session('jwt_token');
-            
+
+            Log::info('validarConSunat - request', [
+                'tipo_comprobante' => $request->tipo_comprobante,
+                'sucursal_id' => $request->sucursal_id,
+                'cliente_id' => $request->cliente_id,
+                'cliente_documento' => $request->cliente_documento ?? null,
+                'productos_count' => is_array($request->productos) ? count($request->productos) : null,
+                'total' => $request->total ?? null,
+            ]);
+
             // Enviar a SUNAT para validación
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('http://greenter.test/api/invoices/send', $sunatJson);
+            ])->post('http://167.114.67.168:8081/api/invoices/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();
@@ -1393,8 +1428,25 @@ class SaleController extends Controller
                         'data' => $data
                     ];
                 } else {
-                    // SUNAT respondió pero con error
-                    $errorMessage = $data['sunatResponse']['cdrResponse']['description'] ?? 'Error desconocido en SUNAT';
+ 		    $cdrDescription = $data['sunatResponse']['cdrResponse']['description'] ?? null;
+                    $sunatErrorMessage = $data['sunatResponse']['error']['message'] ?? null;
+                    $sunatErrorCode = $data['sunatResponse']['error']['code'] ?? null;
+		    Log::error('validarConSunat - success=false payload', [
+                        'http_status' => $response->status(),
+                        'has_cdrResponse' => isset($data['sunatResponse']['cdrResponse']),
+                        'cdr_code' => $data['sunatResponse']['cdrResponse']['code'] ?? null,
+                        'cdr_description' => $cdrDescription,
+                        'has_error' => isset($data['sunatResponse']['error']),
+                        'error_code' => $sunatErrorCode,
+                        'error_message' => $sunatErrorMessage,
+                        // Nota: el JSON completo puede traer el XML firmado y es enorme; por eso guardamos
+                        // el mensaje puntual arriba y dejamos el preview solo como referencia.
+                        'payload_preview' => substr(json_encode($data), 0, 2000),
+                    ]);                    
+		    // SUNAT respondió pero con error
+                    $errorMessage = $cdrDescription
+                        ?? $sunatErrorMessage
+                        ?? 'Error desconocido en SUNAT';
                     return [
                         'success' => false,
                         'error' => $errorMessage
@@ -1403,6 +1455,10 @@ class SaleController extends Controller
             } else {
                 // Error en la comunicación con SUNAT
                 $errorData = $response->json();
+                Log::error('validarConSunat - http error', [
+                    'http_status' => $response->status(),
+                    'error_preview' => is_array($errorData) ? substr(json_encode($errorData), 0, 4000) : (string)$response->body(),
+                ]);
                 $errorMessage = $errorData['message'] ?? 'Error de comunicación con SUNAT';
                 return [
                     'success' => false,
@@ -1410,6 +1466,9 @@ class SaleController extends Controller
                 ];
             }
         } catch (\Exception $e) {
+            Log::error('validarConSunat - exception', [
+                'message' => $e->getMessage(),
+            ]);
             return [
                 'success' => false,
                 'error' => 'Excepción: ' . $e->getMessage()
@@ -2071,7 +2130,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('http://greenter.test/api/notes/send', $sunatJson);
+            ])->post('http://167.114.67.168:8081/api/notes/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();
@@ -2216,7 +2275,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('http://greenter.test/api/notes/send', $sunatJson);
+            ])->post('http://167.114.67.168:8081/api/notes/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();

@@ -51,7 +51,6 @@
                                  value="{{ old('cliente_documento', '00000000') }}"
                                  class="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('cliente_documento') border-red-500 @enderror"
                                  placeholder="Seleccione tipo de comprobante primero"
-                                 required
                                  readonly
                              >
                              <div id="cliente_spinner" class="absolute inset-y-0 right-0 flex items-center pr-3 hidden">
@@ -616,30 +615,89 @@
                 }
             });
            
+            function aplicarClienteGeneral() {
+                const clienteDocumentoInput = document.getElementById('cliente_documento');
+                const clienteIdInput = document.getElementById('cliente_id');
+                const clienteNombreInput = document.getElementById('cliente_nombre');
+                const clienteGeneral = clients.find(client => client.nro_documento === '00000000');
+
+                if (clienteGeneral) {
+                    clienteDocumentoInput.value = clienteGeneral.nro_documento;
+                    clienteIdInput.value = clienteGeneral.id;
+                    clienteNombreInput.value = clienteGeneral.nombre_completo;
+                    return true;
+                }
+
+                clienteDocumentoInput.value = '00000000';
+                clienteNombreInput.value = 'CLIENTE GENERAL';
+                return false;
+            }
+
+            function manejarBlurDocumentoBoleta() {
+                const tipoComprobante = document.getElementById('tipo_comprobante').value;
+                if (tipoComprobante !== 'boleta') {
+                    return;
+                }
+
+                const clienteDocumentoInput = document.getElementById('cliente_documento');
+                const documento = clienteDocumentoInput.value.trim();
+
+                if (documento === '') {
+                    aplicarClienteGeneral();
+                    return;
+                }
+
+                if (documento !== '00000000' && documento.length < 8) {
+                    mostrarMensajeError('Digite el DNI completo (8 dígitos) o déjelo vacío para boleta simple');
+                }
+            }
+
+            function prepararClienteBoletaSimple() {
+                const tipoComprobante = document.getElementById('tipo_comprobante').value;
+                if (tipoComprobante !== 'boleta') {
+                    return true;
+                }
+
+                const clienteDocumentoInput = document.getElementById('cliente_documento');
+                const documento = clienteDocumentoInput.value.trim();
+
+                if (documento === '' || documento === '00000000') {
+                    aplicarClienteGeneral();
+                    return true;
+                }
+
+                if (documento.length < 8) {
+                    mostrarMensajeError('Digite el DNI completo (8 dígitos) o déjelo vacío para boleta simple');
+                    return false;
+                }
+
+                return true;
+            }
+
                        // Manejar cambio de tipo de comprobante
             document.getElementById('tipo_comprobante').addEventListener('change', function() {
                 const tipoComprobante = this.value;
                 const clienteDocumentoInput = document.getElementById('cliente_documento');
                 const clienteIdInput = document.getElementById('cliente_id');
+                const clienteNombreInput = document.getElementById('cliente_nombre');
                 
                 // Limpiar campos
                 clienteDocumentoInput.value = '';
                 clienteIdInput.value = '';
+                clienteNombreInput.value = '';
+                clienteDocumentoInput.removeEventListener('blur', manejarBlurDocumentoBoleta);
                 
                 if (tipoComprobante === 'ticket') {
                     // Para ticket, auto-seleccionar cliente con documento 00000000
-                    const clienteTicket = clients.find(client => client.nro_documento === '00000000');
-                    if (clienteTicket) {
-                        clienteDocumentoInput.value = clienteTicket.nro_documento;
-                        clienteIdInput.value = clienteTicket.id;
-                        clienteDocumentoInput.readOnly = true;
-                        clienteDocumentoInput.placeholder = 'Cliente automático (Ticket)';
-                    }
+                    aplicarClienteGeneral();
+                    clienteDocumentoInput.readOnly = true;
+                    clienteDocumentoInput.placeholder = 'Cliente automático (Ticket)';
                 } else if (tipoComprobante === 'boleta') {
-                    // Para boleta, permitir ingresar DNI
+                    // Para boleta: DNI opcional; vacío = boleta simple (00000000)
                     clienteDocumentoInput.readOnly = false;
-                    clienteDocumentoInput.placeholder = 'Digite DNI';
+                    clienteDocumentoInput.placeholder = 'DNI o vacío = boleta simple';
                     clienteDocumentoInput.addEventListener('input', buscarClientePorDocumento);
+                    clienteDocumentoInput.addEventListener('blur', manejarBlurDocumentoBoleta);
                 } else if (tipoComprobante === 'factura') {
                     // Para factura, permitir ingresar RUC
                     clienteDocumentoInput.readOnly = false;
@@ -1455,6 +1513,20 @@
               console.log('Total:', document.getElementById('total').value);
               console.log('Dividir pago:', document.getElementById('dividir_pago').checked);
               console.log('Monto:', document.getElementById('monto').value);
+
+              if (!prepararClienteBoletaSimple()) {
+                  return;
+              }
+
+              const tipoComprobanteActual = document.getElementById('tipo_comprobante').value;
+              const documentoActual = document.getElementById('cliente_documento').value.trim();
+              const clienteId = document.getElementById('cliente_id').value;
+              const esBoletaSimple = tipoComprobanteActual === 'boleta' && (documentoActual === '' || documentoActual === '00000000');
+
+              if (!clienteId && !esBoletaSimple) {
+                  mostrarMensajeError('Debe seleccionar o consultar un cliente válido');
+                  return;
+              }
               
               if (productosAgregados.length === 0) {
                   alert('Debe agregar al menos un producto a la venta');

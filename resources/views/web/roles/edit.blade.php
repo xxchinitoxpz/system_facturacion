@@ -73,6 +73,19 @@
                     </div>
                 </div>
 
+                <!-- Comprobantes -->
+                <div class="mb-6">
+                    <h4 class="text-md font-semibold text-indigo-700 mb-3 border-b border-indigo-200 pb-2">Comprobantes</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label class="flex items-center">
+                            <input type="checkbox" name="permissions[]" value="ver-comprobantes"
+                                   {{ $role->permissions->contains('name', 'ver-comprobantes') ? 'checked' : '' }}
+                                   class="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500 focus:ring-2">
+                            <span class="ml-2 text-sm font-medium text-gray-700">Ver Comprobantes</span>
+                        </label>
+                    </div>
+                </div>
+
                 <!-- Usuarios -->
                 <div class="mb-6">
                     <h4 class="text-md font-semibold text-indigo-700 mb-3 border-b border-indigo-200 pb-2">Usuarios</h4>

@@ -175,6 +175,9 @@ class PermissionSeeder extends Seeder
 
             // Permisos de reportes
             'ver-reportes',
+
+            // Permisos de comprobantes
+            'ver-comprobantes',
         ];
 
         // Crear solo los permisos que no existen

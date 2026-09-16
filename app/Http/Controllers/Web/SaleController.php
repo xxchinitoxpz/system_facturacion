@@ -433,8 +433,8 @@ class SaleController extends Controller
      */
     public function show(Sale $sale)
     {
-        if (!auth()->user()->can('ver-ventas')) {
-            abort(403, 'No tienes permisos para ver ventas.');
+        if (!$this->canViewSaleOrComprobante($sale)) {
+            abort(403, 'No tienes permisos para ver esta venta.');
         }
 
         // Validar que el empleado solo pueda ver ventas de su sucursal
@@ -787,8 +787,8 @@ class SaleController extends Controller
      */
     public function ticket(Sale $sale)
     {
-        if (!auth()->user()->can('ver-ventas')) {
-            abort(403, 'No tienes permisos para ver ventas.');
+        if (!$this->canViewSaleOrComprobante($sale)) {
+            abort(403, 'No tienes permisos para ver esta venta.');
         }
 
         // Validar que el empleado solo pueda ver ventas de su sucursal
@@ -2306,5 +2306,23 @@ class SaleController extends Controller
             Log::error('Error al enviar nota de crédito a SUNAT automáticamente: ' . $e->getMessage());
             throw $e;
         }
+    }
+
+    /**
+     * Permite ver ventas con ver-ventas, o boleta/factura con ver-comprobantes.
+     */
+    private function canViewSaleOrComprobante(Sale $sale): bool
+    {
+        $user = auth()->user();
+
+        if ($user->can('ver-ventas')) {
+            return true;
+        }
+
+        if ($user->can('ver-comprobantes') && in_array(strtolower((string) $sale->tipo_comprobante), ['boleta', 'factura'], true)) {
+            return true;
+        }
+
+        return false;
     }
 }

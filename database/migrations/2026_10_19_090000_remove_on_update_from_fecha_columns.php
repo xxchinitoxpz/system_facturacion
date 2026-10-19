@@ -22,17 +22,10 @@ return new class extends Migration
             return;
         }
 
+        // Debe correr antes de cualquier migración que actualice filas de estas tablas
         foreach ($this->columnas as $tabla => $columna) {
             DB::statement("ALTER TABLE `{$tabla}` MODIFY `{$columna}` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP");
         }
-
-        // Restaurar la fecha original de boletas/facturas: al registrar la venta,
-        // fecha_venta y created_at se guardan con la misma hora
-        DB::table('sales')
-            ->whereNotNull('estado_sunat')
-            ->whereNotNull('created_at')
-            ->whereColumn('fecha_venta', '!=', 'created_at')
-            ->update(['fecha_venta' => DB::raw('created_at')]);
     }
 
     public function down(): void

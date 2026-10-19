@@ -12,8 +12,8 @@ class PeruApiService
 
     public function __construct()
     {
-        $this->token = 'a5582300981c75d61f0f304ac9c684bca67f712f7456ad4a9eb8a2a8bfc23bb5';
-        $this->baseUrl = 'https://apiperu.dev/api';
+        $this->token = config('services.apiperu.token');
+        $this->baseUrl = config('services.apiperu.url');
     }
 
     /**

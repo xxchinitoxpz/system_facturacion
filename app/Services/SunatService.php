@@ -47,13 +47,13 @@ class SunatService
 
         $api = new \Greenter\Api($company->production ?
             [
-                'auth' => 'https://api-seguridad.sunat.gob.pe/v1',
-                'cpe' => 'https://api-cpe.sunat.gob.pe/v1'
+                'auth' => config('services.sunat.prod_auth_url'),
+                'cpe' => config('services.sunat.prod_cpe_url')
             ]
             :
             [
-                'auth' => 'https://gre-test.nubefact.com/v1',
-                'cpe' => 'https://gre-test.nubefact.com/v1'
+                'auth' => config('services.sunat.beta_auth_url'),
+                'cpe' => config('services.sunat.beta_cpe_url')
             ]);
 
         $api->setBuilderOptions([
@@ -62,12 +62,12 @@ class SunatService
             'debug' => true,
             'cache' => false,
         ])->setApiCredentials(
-            $company->production ? $company->client_id : "test-85e5b0ae-255c-4891-a595-0b98c65c9854",
-            $company->production ? $company->client_secret : "test-Hty/M6QshYvPgItX2P0+Kw=="
+            $company->production ? $company->client_id : config('services.sunat.beta_client_id'),
+            $company->production ? $company->client_secret : config('services.sunat.beta_client_secret')
         )->setClaveSOL(
             $company->ruc,
-            $company->production ? $company->sol_user : "MODDATOS",
-            $company->production ? $company->sol_pass : "MODDATOS"
+            $company->production ? $company->sol_user : config('services.sunat.beta_sol_user'),
+            $company->production ? $company->sol_pass : config('services.sunat.beta_sol_pass')
         )->setCertificate(Storage::get($company->cert_path));
 
         return $api;

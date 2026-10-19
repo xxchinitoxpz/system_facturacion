@@ -35,4 +35,25 @@ return [
         ],
     ],
 
+
+    'apiperu' => [
+        'token' => env('APIPERU_TOKEN'),
+        'url' => env('APIPERU_URL', 'https://apiperu.dev/api'),
+    ],
+
+    'facturacion' => [
+        'url' => rtrim(env('FACTURACION_API_URL', env('APP_URL', 'http://localhost')), '/'),
+    ],
+
+    'sunat' => [
+        'prod_auth_url' => env('SUNAT_PROD_AUTH_URL', 'https://api-seguridad.sunat.gob.pe/v1'),
+        'prod_cpe_url' => env('SUNAT_PROD_CPE_URL', 'https://api-cpe.sunat.gob.pe/v1'),
+        'beta_auth_url' => env('SUNAT_BETA_AUTH_URL', 'https://gre-test.nubefact.com/v1'),
+        'beta_cpe_url' => env('SUNAT_BETA_CPE_URL', 'https://gre-test.nubefact.com/v1'),
+        'beta_client_id' => env('SUNAT_BETA_CLIENT_ID'),
+        'beta_client_secret' => env('SUNAT_BETA_CLIENT_SECRET'),
+        'beta_sol_user' => env('SUNAT_BETA_SOL_USER', 'MODDATOS'),
+        'beta_sol_pass' => env('SUNAT_BETA_SOL_PASS', 'MODDATOS'),
+    ],
+
 ];

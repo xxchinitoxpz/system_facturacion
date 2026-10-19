@@ -125,6 +125,8 @@ Route::middleware('auth')->group(function () {
 
     Route::get('reportes/ventas', [SalesReportController::class, 'index'])->name('reports.sales');
     Route::get('comprobantes', [ComprobanteController::class, 'index'])->name('comprobantes.index');
+    Route::post('comprobantes/enviar-pendientes', [SaleController::class, 'enviarComprobantesPendientes'])->name('comprobantes.enviar-pendientes');
+    Route::post('comprobantes/{sale}/enviar', [SaleController::class, 'enviarComprobante'])->name('comprobantes.enviar');
 
     // Rutas para venta 2
     Route::get('sales2', [Sale2Controller::class, 'index'])->name('sales2.index');

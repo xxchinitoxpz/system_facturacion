@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\Combo;
 use App\Models\Presentation;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -301,6 +302,14 @@ class SaleController extends Controller
                 }
             }
 
+            // Para facturas el cliente debe tener RUC (se valida aquí porque el envío a SUNAT es posterior)
+            if ($request->tipo_comprobante === 'factura') {
+                $documentoCliente = Client::find($clienteId)->nro_documento ?? '';
+                if (strlen($documentoCliente) !== 11) {
+                    throw new \Exception('Para facturas se requiere un cliente con RUC válido (11 dígitos). El cliente actual tiene documento de ' . strlen($documentoCliente) . ' dígitos.');
+                }
+            }
+
             $sale = Sale::create([
                 'fecha_venta' => now(),
                 'total' => $request->total,
@@ -397,29 +406,19 @@ class SaleController extends Controller
                 $this->registrarMovimientoCaja($sale, 'ingreso', $pago);
             }
 
-            // Si es boleta o factura, validar con SUNAT ANTES de crear la venta
-            $sunatData = null;
+            // Boleta o factura: se reserva el número y queda pendiente de envío a SUNAT
+            // (el envío se hace después desde el módulo de Comprobantes)
+            $mensaje = 'Venta creada exitosamente.';
             if (in_array($request->tipo_comprobante, ['boleta', 'factura'])) {
-                // Verificar que existan las series de documentos
                 $this->verificarSeriesDocumentos($request->sucursal_id);
-                
-                // Validar con SUNAT antes de crear la venta
-                $sunatValidation = $this->validarConSunat($request);
-                if (!$sunatValidation['success']) {
-                    throw new \Exception('Error en SUNAT: ' . $sunatValidation['error']);
-                }
-                $sunatData = $sunatValidation['data'];
+                $this->reservarNumeroComprobante($sale);
+                $mensaje = "Venta creada exitosamente. Comprobante {$sale->serie}-{$sale->correlativo} pendiente de envío a SUNAT.";
             }
 
             DB::commit();
 
-            // Si la validación fue exitosa y es boleta/factura, enviar a SUNAT y guardar respuesta
-            if ($sunatData && in_array($request->tipo_comprobante, ['boleta', 'factura'])) {
-                $this->enviarASunat($sale, $request, $sunatData);
-            }
-
             return redirect()->route('sales.show', $sale)
-                ->with('success', 'Venta creada exitosamente.');
+                ->with('success', $mensaje);
         } catch (\Exception $e) {
             DB::rollBack();
             return redirect()->back()
@@ -759,13 +758,17 @@ class SaleController extends Controller
             // Registrar movimiento de salida por anulación
             $this->registrarMovimientoCaja($sale, 'salida');
 
-            // Cambiar el estado a anulada
-            $sale->update(['estado' => 'anulada']);
+            // Cambiar el estado a anulada; si el comprobante aún no se emitió, ya no se enviará a SUNAT
+            $datosAnulacion = ['estado' => 'anulada'];
+            if (in_array($sale->estado_sunat, ['pendiente', 'error'])) {
+                $datosAnulacion['estado_sunat'] = 'anulado';
+            }
+            $sale->update($datosAnulacion);
 
             DB::commit();
 
-            // Si es boleta o factura, enviar nota de crédito a SUNAT automáticamente
-            if (in_array(strtolower($sale->tipo_comprobante), ['boleta', 'factura'])) {
+            // Solo los comprobantes aceptados por SUNAT necesitan nota de crédito
+            if ($sale->estado_sunat === 'aceptado') {
                 try {
                     $this->enviarNotaASunatAutomatica($sale);
                 } catch (\Exception $e) {
@@ -805,8 +808,11 @@ class SaleController extends Controller
             $sunatResponse = null;
             $codigoQR = null;
             if (in_array(strtolower($sale->tipo_comprobante), ['boleta', 'factura'])) {
-                $sunatResponse = \App\Models\SunatResponse::where('venta_id', $sale->id)->first();
-                if ($sunatResponse && $sunatResponse->exitoso) {
+                $sunatResponse = \App\Models\SunatResponse::where('venta_id', $sale->id)
+                    ->where('exitoso', true)
+                    ->latest('id')
+                    ->first();
+                if ($sunatResponse) {
                     $codigoQR = $this->generarCodigoQR($sale, $sunatResponse);
                 }
             }
@@ -1270,78 +1276,253 @@ class SaleController extends Controller
     }
 
     /**
-     * Generar JSON para SUNAT
+     * Enviar a SUNAT un comprobante (boleta/factura) pendiente
      */
-    private function generateSunatJson(Request $request)
+    public function enviarComprobante(Sale $sale)
     {
-        // Obtener datos de la empresa
-        $branch = Branch::find($request->sucursal_id);
-        $company = $branch->company;
-
-        // Obtener datos del cliente
-        $clienteId = $request->cliente_id;
-        if (str_starts_with($clienteId, 'temp_')) {
-            // Para clientes temporales, extraer el documento del ID temporal
-            $documento = str_replace('temp_', '', $clienteId);
-            
-            // Verificar si ya existe un cliente con ese documento
-            $cliente = Client::where('nro_documento', $documento)->first();
-            
-            if (!$cliente) {
-                // Si no existe, buscar el cliente general (para tickets)
-                $cliente = Client::where('nro_documento', '00000000')->first();
-                
-                // Si es factura y no hay cliente válido, lanzar error
-                if ($request->tipo_comprobante === 'factura' && (!$cliente || $cliente->nro_documento === '00000000')) {
-                    throw new \Exception('Para facturas se requiere un cliente con RUC válido. No se puede usar cliente temporal.');
-                }
-            }
-        } else {
-            $cliente = Client::find($clienteId);
-        }
-        
-        // Validar que el cliente existe
-        if (!$cliente) {
-            throw new \Exception('No se encontró el cliente especificado.');
-        }
-        
-        // Validar que para facturas, el cliente tenga un RUC válido (11 dígitos)
-        if ($request->tipo_comprobante === 'factura') {
-            if (strlen($cliente->nro_documento) !== 11) {
-                throw new \Exception('Para facturas se requiere un cliente con RUC válido (11 dígitos). El cliente actual tiene documento de ' . strlen($cliente->nro_documento) . ' dígitos.');
-            }
+        if (!auth()->user()->can('emitir-comprobantes')) {
+            abort(403, 'No tienes permisos para enviar comprobantes a SUNAT.');
         }
 
-        // Obtener serie y correlativo
-        $documentSeries = \App\Models\DocumentSeries::where('sucursal_id', $request->sucursal_id)
-            ->where('tipo_comprobante', $request->tipo_comprobante)
+        // Validar que el empleado solo pueda enviar comprobantes de su sucursal
+        $user = auth()->user();
+        if ($user->sucursal_id !== null && $sale->sucursal_id != $user->sucursal_id) {
+            abort(403, 'No tienes permisos para enviar comprobantes de esta sucursal.');
+        }
+
+        $resultado = $this->procesarEnvioComprobante($sale);
+
+        return redirect()->back()->with($resultado['estado'] === 'aceptado' ? 'success' : 'error', $resultado['mensaje']);
+    }
+
+    /**
+     * Enviar a SUNAT todos los comprobantes pendientes (o con error de envío)
+     */
+    public function enviarComprobantesPendientes(Request $request)
+    {
+        if (!auth()->user()->can('emitir-comprobantes')) {
+            abort(403, 'No tienes permisos para enviar comprobantes a SUNAT.');
+        }
+
+        // Cantidad máxima por clic para no exceder el tiempo de la petición
+        $limite = 50;
+        set_time_limit(600);
+
+        $user = auth()->user();
+        $sucursalId = $user->sucursal_id ?? $request->input('sucursal_id');
+
+        $pendientes = fn () => Sale::query()
+            ->whereIn('tipo_comprobante', ['boleta', 'factura'])
+            ->whereIn('estado_sunat', ['pendiente', 'error'])
+            ->where('estado', '!=', 'anulada')
+            ->when($sucursalId, fn ($query) => $query->where('sucursal_id', $sucursalId));
+
+        $sales = $pendientes()
+            ->orderBy('fecha_venta')
+            ->orderBy('correlativo')
+            ->limit($limite)
+            ->get();
+
+        if ($sales->isEmpty()) {
+            return redirect()->back()->with('success', 'No hay comprobantes pendientes de envío.');
+        }
+
+        $aceptados = 0;
+        $fallidos = [];
+        $erroresSeguidos = 0;
+
+        foreach ($sales as $sale) {
+            $resultado = $this->procesarEnvioComprobante($sale);
+
+            if ($resultado['estado'] === 'aceptado') {
+                $aceptados++;
+                $erroresSeguidos = 0;
+                continue;
+            }
+
+            $fallidos[] = $resultado['mensaje'];
+
+            // Si la API o SUNAT no responden, no tiene sentido seguir intentando
+            $erroresSeguidos = $resultado['estado'] === 'error' ? $erroresSeguidos + 1 : 0;
+            if ($erroresSeguidos >= 3) {
+                $fallidos[] = 'Se detuvo el envío tras 3 errores de conexión seguidos. Intente nuevamente más tarde.';
+                break;
+            }
+        }
+
+        $restantes = $pendientes()->where('estado_sunat', 'pendiente')->count();
+
+        $mensaje = "Enviados a SUNAT: {$aceptados} aceptado(s)";
+        if (count($fallidos) > 0) {
+            $mensaje .= ', ' . count(array_filter($fallidos, fn ($m) => !str_starts_with($m, 'Se detuvo'))) . ' con problemas';
+        }
+        if ($restantes > 0) {
+            $mensaje .= ". Quedan {$restantes} pendiente(s); vuelva a pulsar el botón para continuar";
+        }
+        $mensaje .= '.';
+
+        $redirect = redirect()->back()->with(count($fallidos) > 0 ? 'error' : 'success', $mensaje);
+        if (count($fallidos) > 0) {
+            $redirect->with('errores_envio', $fallidos);
+        }
+
+        return $redirect;
+    }
+
+    /**
+     * Envía un comprobante a SUNAT y actualiza su estado.
+     * Devuelve ['estado' => aceptado|rechazado|error|omitido, 'mensaje' => string]
+     */
+    private function procesarEnvioComprobante(Sale $sale)
+    {
+        // Evitar que dos usuarios envíen el mismo comprobante a la vez
+        $lock = Cache::lock('enviar-comprobante-' . $sale->id, 120);
+        if (!$lock->get()) {
+            return ['estado' => 'omitido', 'mensaje' => "El comprobante {$sale->serie}-{$sale->correlativo} ya se está enviando a SUNAT. Espere un momento."];
+        }
+
+        try {
+            $sale->refresh();
+            $numero = "{$sale->serie}-{$sale->correlativo}";
+
+            if (!in_array(strtolower($sale->tipo_comprobante), ['boleta', 'factura'])) {
+                return ['estado' => 'omitido', 'mensaje' => 'Solo se pueden enviar boletas y facturas a SUNAT.'];
+            }
+
+            if ($sale->estado === 'anulada') {
+                return ['estado' => 'omitido', 'mensaje' => "El comprobante {$numero} está anulado y no se enviará a SUNAT."];
+            }
+
+            if (!in_array($sale->estado_sunat, ['pendiente', 'error'])) {
+                return ['estado' => 'omitido', 'mensaje' => "El comprobante {$numero} no está pendiente de envío (estado: {$sale->estado_sunat})."];
+            }
+
+            if (!$sale->serie || !$sale->correlativo) {
+                return ['estado' => 'omitido', 'mensaje' => 'El comprobante no tiene serie y correlativo asignados.'];
+            }
+
+            $resultado = $this->enviarJsonASunat($this->generateSunatJson($sale));
+
+            if ($resultado['success']) {
+                $this->guardarRespuestaSunat($sale, $resultado['data']);
+                $sale->update(['estado_sunat' => 'aceptado']);
+
+                return ['estado' => 'aceptado', 'mensaje' => "Comprobante {$numero} aceptado por SUNAT."];
+            }
+
+            // Guardar el intento fallido para que quede el motivo
+            \App\Models\SunatResponse::create([
+                'venta_id' => $sale->id,
+                'numero_documento' => $numero,
+                'tipo_documento' => strtolower($sale->tipo_comprobante) === 'factura' ? '01' : '03',
+                'xml_path' => '',
+                'cdr_path' => null,
+                'hash_documento' => '',
+                'codigo_respuesta' => (string) ($resultado['codigo'] ?? 'ERROR'),
+                'descripcion_respuesta' => $resultado['error'],
+                'exitoso' => false,
+                'respuesta_completa' => $resultado['data'] ?? ['error' => $resultado['error']],
+            ]);
+
+            $estado = $resultado['rechazado'] ? 'rechazado' : 'error';
+            $sale->update(['estado_sunat' => $estado]);
+
+            $prefijo = $resultado['rechazado'] ? 'SUNAT rechazó el comprobante' : 'No se pudo enviar el comprobante';
+            return ['estado' => $estado, 'mensaje' => "{$prefijo} {$numero}: {$resultado['error']}"];
+        } catch (\Exception $e) {
+            Log::error('procesarEnvioComprobante - exception', ['sale_id' => $sale->id, 'message' => $e->getMessage()]);
+            return ['estado' => 'error', 'mensaje' => "Error al enviar el comprobante {$sale->serie}-{$sale->correlativo}: " . $e->getMessage()];
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Reservar serie y correlativo para una boleta/factura al momento de registrarla
+     */
+    private function reservarNumeroComprobante(Sale $sale)
+    {
+        // lockForUpdate evita que dos ventas simultáneas obtengan el mismo número
+        $documentSeries = DocumentSeries::where('sucursal_id', $sale->sucursal_id)
+            ->where('tipo_comprobante', $sale->tipo_comprobante)
+            ->lockForUpdate()
             ->first();
 
         if (!$documentSeries) {
             throw new \Exception('No se encontró serie de documento para este tipo de comprobante.');
         }
 
+        $correlativo = $documentSeries->ultimo_correlativo + 1;
+        $documentSeries->update(['ultimo_correlativo' => $correlativo]);
+
+        $sale->update([
+            'serie' => $documentSeries->serie,
+            'correlativo' => $correlativo,
+            'estado_sunat' => 'pendiente',
+        ]);
+    }
+
+    /**
+     * Generar JSON para SUNAT a partir de la venta registrada
+     */
+    private function generateSunatJson(Sale $sale)
+    {
+        $sale->load(['client', 'branch.company']);
+        $company = $sale->branch->company;
+        $cliente = $sale->client;
+
+        if (!$cliente) {
+            throw new \Exception('No se encontró el cliente de la venta.');
+        }
+
+        $tipoComprobante = strtolower($sale->tipo_comprobante);
+
+        if ($tipoComprobante === 'factura' && strlen($cliente->nro_documento) !== 11) {
+            throw new \Exception('Para facturas se requiere un cliente con RUC válido (11 dígitos). El cliente actual tiene documento de ' . strlen($cliente->nro_documento) . ' dígitos.');
+        }
+
         // Determinar tipo de documento SUNAT
-        $tipoDoc = $request->tipo_comprobante === 'factura' ? '01' : '03';
-        
+        $tipoDoc = $tipoComprobante === 'factura' ? '01' : '03';
+
         // Determinar tipo de documento del cliente basado en la longitud del documento
         $tipoDocCliente = strlen($cliente->nro_documento) === 11 ? '6' : '1';
 
-        // Generar detalles de productos
+        // Generar detalles de productos y combos de la venta
         $details = [];
-        foreach ($request->productos as $producto) {
-            $mtoValorUnitario = $producto['precio_unitario'] / 1.18; // Precio sin IGV
-            $mtoValorVenta = $mtoValorUnitario * $producto['cantidad'];
+        $saleItems = DB::table('sale_products')
+            ->where('venta_id', $sale->id)
+            ->get();
+
+        foreach ($saleItems as $item) {
+            $mtoValorUnitario = $item->precio_unitario / 1.18; // Precio sin IGV
+            $mtoValorVenta = $mtoValorUnitario * $item->cantidad;
             $mtoBaseIgv = $mtoValorVenta;
             $igv = $mtoBaseIgv * 0.18;
-            $mtoPrecioUnitario = $producto['precio_unitario'];
+            $mtoPrecioUnitario = $item->precio_unitario;
+
+            if ($item->producto_id !== null) {
+                $product = Product::find($item->producto_id);
+                $nombre = $item->nombre_producto ?? $product->nombre ?? 'Producto';
+                $codProducto = $this->getProductBarcode([
+                    'tipo' => 'producto',
+                    'item_id' => $item->presentacion_id ?? $item->producto_id,
+                    'es_presentacion' => $item->presentacion_id !== null,
+                ]);
+            } else {
+                $combo = Combo::find($item->combo_id);
+                $nombre = $combo->nombre ?? 'Combo';
+                $codProducto = $this->getProductBarcode([
+                    'tipo' => 'combo',
+                    'item_id' => $item->combo_id,
+                ]);
+            }
 
             $details[] = [
                 'tipAfeIgv' => 10,
-                'codProducto' => $this->getProductBarcode($producto),
+                'codProducto' => $codProducto,
                 'unidad' => 'NIU',
-                'descripcion' => $producto['nombre'],
-                'cantidad' => $producto['cantidad'],
+                'descripcion' => $nombre,
+                'cantidad' => $item->cantidad,
                 'mtoValorUnitario' => round($mtoValorUnitario, 2),
                 'mtoValorVenta' => round($mtoValorVenta, 2),
                 'mtoBaseIgv' => round($mtoBaseIgv, 2),
@@ -1352,14 +1533,14 @@ class SaleController extends Controller
             ];
         }
 
-        // Construir JSON
-        $json = [
+        // Construir JSON (la fecha de emisión es la fecha de la venta)
+        return [
             'ublVersion' => '2.1',
             'tipoDoc' => $tipoDoc,
             'tipoOperacion' => '0101',
-            'serie' => $documentSeries->serie,
-            'correlativo' => (string)($documentSeries->ultimo_correlativo + 1),
-            'fechaEmision' => now()->format('Y-m-d\TH:i:s-05:00'),
+            'serie' => $sale->serie,
+            'correlativo' => (string) $sale->correlativo,
+            'fechaEmision' => $sale->fecha_venta->format('Y-m-d\TH:i:s-05:00'),
             'formaPago' => [
                 'moneda' => 'PEN',
                 'tipo' => 'Contado'
@@ -1386,113 +1567,109 @@ class SaleController extends Controller
             ],
             'details' => $details
         ];
-
-        return $json;
     }
 
     /**
-     * Validar con SUNAT antes de crear la venta
+     * Enviar el JSON del comprobante a la API de facturación (que lo emite a SUNAT)
      */
-    private function validarConSunat($request)
+    private function enviarJsonASunat(array $sunatJson)
     {
         try {
-            // Generar JSON para SUNAT
-            $sunatJson = $this->generateSunatJson($request);
-            
             // Obtener token JWT de la sesión
             $jwtToken = session('jwt_token');
 
-            Log::info('validarConSunat - request', [
-                'tipo_comprobante' => $request->tipo_comprobante,
-                'sucursal_id' => $request->sucursal_id,
-                'cliente_id' => $request->cliente_id,
-                'cliente_documento' => $request->cliente_documento ?? null,
-                'productos_count' => is_array($request->productos) ? count($request->productos) : null,
-                'total' => $request->total ?? null,
+            Log::info('enviarJsonASunat - request', [
+                'serie' => $sunatJson['serie'],
+                'correlativo' => $sunatJson['correlativo'],
+                'tipoDoc' => $sunatJson['tipoDoc'],
+                'cliente' => $sunatJson['client']['numDoc'],
+                'items' => count($sunatJson['details']),
             ]);
 
-            // Enviar a SUNAT para validación
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('http://167.114.67.168:8081/api/invoices/send', $sunatJson);
-            
+            ])->post(config('services.facturacion.url') . '/api/invoices/send', $sunatJson);
+
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 // Verificar si SUNAT respondió con éxito
                 if (isset($data['sunatResponse']['success']) && $data['sunatResponse']['success']) {
                     return [
                         'success' => true,
                         'data' => $data
                     ];
-                } else {
-                    $cdrDescription = $data['sunatResponse']['cdrResponse']['description'] ?? null;
-                    $sunatErrorMessage = $data['sunatResponse']['error']['message'] ?? null;
-                    $sunatErrorCode = $data['sunatResponse']['error']['code'] ?? null;
-                    Log::error('validarConSunat - success=false payload', [
-                        'http_status' => $response->status(),
-                        'has_cdrResponse' => isset($data['sunatResponse']['cdrResponse']),
-                        'cdr_code' => $data['sunatResponse']['cdrResponse']['code'] ?? null,
-                        'cdr_description' => $cdrDescription,
-                        'has_error' => isset($data['sunatResponse']['error']),
-                        'error_code' => $sunatErrorCode,
-                        'error_message' => $sunatErrorMessage,
-                        // Nota: el JSON completo puede traer el XML firmado y es enorme; por eso guardamos
-                        // el mensaje puntual arriba y dejamos el preview solo como referencia.
-                        'payload_preview' => substr(json_encode($data), 0, 2000),
-                    ]);
-                    // SUNAT respondió pero con error
-                    $errorMessage = $cdrDescription
-                        ?? $sunatErrorMessage
-                        ?? 'Error desconocido en SUNAT';
-                    return [
-                        'success' => false,
-                        'error' => $errorMessage
-                    ];
                 }
-            } else {
-                // Error en la comunicación con SUNAT
-                $errorData = $response->json();
-                Log::error('validarConSunat - http error', [
+
+                $cdrDescription = $data['sunatResponse']['cdrResponse']['description'] ?? null;
+                $sunatErrorMessage = $data['sunatResponse']['error']['message'] ?? null;
+                $codigo = $data['sunatResponse']['cdrResponse']['code'] ?? $data['sunatResponse']['error']['code'] ?? null;
+                Log::error('enviarJsonASunat - success=false payload', [
                     'http_status' => $response->status(),
-                    'error_preview' => is_array($errorData) ? substr(json_encode($errorData), 0, 4000) : (string)$response->body(),
+                    'codigo' => $codigo,
+                    'cdr_description' => $cdrDescription,
+                    'error_message' => $sunatErrorMessage,
+                    // El JSON completo puede traer el XML firmado y es enorme
+                    'payload_preview' => substr(json_encode($data), 0, 2000),
                 ]);
-                $errorMessage = $errorData['message'] ?? 'Error de comunicación con SUNAT';
+
+                // Códigos 2000-3999 son rechazos: el número queda usado en SUNAT y no se puede reenviar
+                $rechazado = is_numeric($codigo) && (int) $codigo >= 2000 && (int) $codigo < 4000;
+
                 return [
                     'success' => false,
-                    'error' => $errorMessage
+                    'rechazado' => $rechazado,
+                    'codigo' => $codigo,
+                    'error' => $cdrDescription ?? $sunatErrorMessage ?? 'Error desconocido en SUNAT',
+                    'data' => ['sunatResponse' => $data['sunatResponse'] ?? null],
                 ];
             }
+
+            // Error en la comunicación con la API de facturación
+            $errorData = $response->json();
+            Log::error('enviarJsonASunat - http error', [
+                'http_status' => $response->status(),
+                'error_preview' => is_array($errorData) ? substr(json_encode($errorData), 0, 4000) : (string)$response->body(),
+            ]);
+
+            return [
+                'success' => false,
+                'rechazado' => false,
+                'codigo' => 'HTTP ' . $response->status(),
+                'error' => $errorData['message'] ?? 'Error de comunicación con SUNAT',
+            ];
         } catch (\Exception $e) {
-            Log::error('validarConSunat - exception', [
+            Log::error('enviarJsonASunat - exception', [
                 'message' => $e->getMessage(),
             ]);
             return [
                 'success' => false,
+                'rechazado' => false,
+                'codigo' => 'EXCEPTION',
                 'error' => 'Excepción: ' . $e->getMessage()
             ];
         }
     }
 
     /**
-     * Guardar respuesta de SUNAT (después de crear la venta exitosamente)
+     * Guardar respuesta de SUNAT de un comprobante aceptado
      */
-    private function enviarASunat($sale, $request, $sunatData)
+    private function guardarRespuestaSunat($sale, $sunatData)
     {
         try {
             // Extraer número de documento del XML
             $numeroDocumento = $this->extractDocumentNumberFromXml($sunatData['xml']);
-            
+
             // Guardar archivos XML y CDR
             $xmlPath = $this->saveXmlFile($sunatData['xml'], $sale->id, $numeroDocumento);
             $cdrPath = null;
-            
+
             if (isset($sunatData['sunatResponse']['cdrZip'])) {
                 $cdrPath = $this->saveCdrFile($sunatData['sunatResponse']['cdrZip'], $sale->id, $numeroDocumento);
             }
-            
+
             // Guardar respuesta en BD
             \App\Models\SunatResponse::create([
                 'venta_id' => $sale->id,
@@ -1509,7 +1686,7 @@ class SaleController extends Controller
 
             // Actualizar el último correlativo en document_series
             $this->actualizarCorrelativoDocumento($sale, $numeroDocumento);
-            
+
         } catch (\Exception $e) {
             // Guardar error en BD
             \App\Models\SunatResponse::create([
@@ -1972,7 +2149,10 @@ class SaleController extends Controller
             }
 
             // Obtener número de documento original (de la respuesta SUNAT)
-            $sunatResponse = \App\Models\SunatResponse::where('venta_id', $sale->id)->first();
+            $sunatResponse = \App\Models\SunatResponse::where('venta_id', $sale->id)
+                ->where('exitoso', true)
+                ->latest('id')
+                ->first();
             $numDocfectado = $sunatResponse ? $sunatResponse->numero_documento : 'F001-00000001'; // Fallback
 
             // Generar detalles de productos y combos
@@ -2108,6 +2288,14 @@ class SaleController extends Controller
             ], 403);
         }
 
+        // Un comprobante que nunca se emitió a SUNAT no lleva nota de crédito
+        if ($sale->estado_sunat !== 'aceptado') {
+            return response()->json([
+                'success' => true,
+                'message' => 'El comprobante no fue emitido a SUNAT; no requiere nota de crédito.'
+            ]);
+        }
+
         try {
             // Generar JSON de nota de crédito
             $jsonResponse = $this->jsonNota($sale);
@@ -2130,7 +2318,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('http://167.114.67.168:8081/api/notes/send', $sunatJson);
+            ])->post(config('services.facturacion.url') . '/api/notes/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();
@@ -2275,7 +2463,7 @@ class SaleController extends Controller
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $jwtToken
-            ])->post('http://167.114.67.168:8081/api/notes/send', $sunatJson);
+            ])->post(config('services.facturacion.url') . '/api/notes/send', $sunatJson);
             
             if ($response->successful()) {
                 $data = $response->json();

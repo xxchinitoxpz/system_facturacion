@@ -20,6 +20,7 @@ class Sale extends Model
         'tipo_comprobante',
         'serie',
         'correlativo',
+        'estado_sunat',
     ];
 
     protected $casts = [

@@ -5,7 +5,33 @@
                 <h1 class="text-2xl font-bold text-indigo-800">Comprobantes</h1>
                 <p class="text-sm text-gray-500 mt-1">Boletas y facturas electrónicas</p>
             </div>
+            @can('emitir-comprobantes')
+                @if($totalPendientes > 0)
+                    <form method="POST" action="{{ route('comprobantes.enviar-pendientes') }}"
+                          onsubmit="return confirmEnviarPendientes(this, {{ $totalPendientes }})">
+                        @csrf
+                        @if($sucursal_id && auth()->user()->sucursal_id === null)
+                            <input type="hidden" name="sucursal_id" value="{{ $sucursal_id }}">
+                        @endif
+                        <button type="submit"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                            Enviar todos los pendientes ({{ $totalPendientes }})
+                        </button>
+                    </form>
+                @endif
+            @endcan
         </div>
+
+        @if(session('errores_envio'))
+            <div class="mb-4 p-4 bg-orange-50 border border-orange-300 text-orange-800 rounded-lg text-sm">
+                <p class="font-semibold mb-1">Detalle de comprobantes con problemas:</p>
+                <ul class="list-disc list-inside space-y-1">
+                    @foreach(session('errores_envio') as $errorEnvio)
+                        <li>{{ $errorEnvio }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
 
         @if(session('success'))
             <div class="mb-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg">
@@ -21,7 +47,7 @@
 
         <div class="mb-6">
             <form method="GET" action="{{ route('comprobantes.index') }}">
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
                     <div class="lg:col-span-2">
                         <input
                             type="text"
@@ -49,6 +75,17 @@
                             @foreach($estados as $estadoOption)
                                 <option value="{{ $estadoOption }}" {{ $estado == $estadoOption ? 'selected' : '' }}>
                                     {{ ucfirst($estadoOption) }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div>
+                        <select name="estado_sunat" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="">Todos los estados SUNAT</option>
+                            @foreach($estadosSunat as $valor => $etiqueta)
+                                <option value="{{ $valor }}" {{ $estado_sunat == $valor ? 'selected' : '' }}>
+                                    {{ $etiqueta }}
                                 </option>
                             @endforeach
                         </select>
@@ -92,7 +129,7 @@
                     <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
                         Buscar
                     </button>
-                    @if($search || $estado || $tipo_comprobante || $cliente_id || $sucursal_id || $fecha_inicio || $fecha_fin)
+                    @if($search || $estado || $estado_sunat || $tipo_comprobante || $cliente_id || $sucursal_id || $fecha_inicio || $fecha_fin)
                         <a href="{{ route('comprobantes.index') }}" class="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
                             Limpiar
                         </a>
@@ -151,12 +188,24 @@
                                 @endif
                             </td>
                             <td class="px-4 py-2 text-sm">
-                                @if(!$sunat)
-                                    <span class="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full" title="Sin respuesta registrada">Sin envío</span>
-                                @elseif($sunat->exitoso)
-                                    <span class="px-2 py-1 text-xs font-medium bg-emerald-100 text-emerald-800 rounded-full" title="{{ $sunat->descripcion_respuesta }}">Aceptado</span>
-                                @else
-                                    <span class="px-2 py-1 text-xs font-medium bg-rose-100 text-rose-800 rounded-full" title="{{ $sunat->descripcion_respuesta }}">Error</span>
+                                @switch($sale->estado_sunat)
+                                    @case('aceptado')
+                                        <span class="px-2 py-1 text-xs font-medium bg-emerald-100 text-emerald-800 rounded-full" title="{{ $sunat->descripcion_respuesta ?? '' }}">Aceptado</span>
+                                        @break
+                                    @case('rechazado')
+                                        <span class="px-2 py-1 text-xs font-medium bg-rose-100 text-rose-800 rounded-full" title="{{ $sunat->descripcion_respuesta ?? '' }}">Rechazado</span>
+                                        @break
+                                    @case('error')
+                                        <span class="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800 rounded-full" title="{{ $sunat->descripcion_respuesta ?? '' }}">Error de envío</span>
+                                        @break
+                                    @case('anulado')
+                                        <span class="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full" title="Anulado antes de emitirse; no se envía a SUNAT">Anulado sin emitir</span>
+                                        @break
+                                    @default
+                                        <span class="px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full" title="Registrado, aún no enviado a SUNAT">Pendiente</span>
+                                @endswitch
+                                @if($sunat && in_array($sale->estado_sunat, ['rechazado', 'error']))
+                                    <div class="text-xs text-gray-500 mt-1 max-w-xs truncate" title="{{ $sunat->descripcion_respuesta }}">{{ $sunat->descripcion_respuesta }}</div>
                                 @endif
                             </td>
                             <td class="px-4 py-2 text-sm text-gray-900">{{ $sale->user->name ?? '—' }}</td>
@@ -173,6 +222,19 @@
                                        title="Ver PDF">
                                         PDF
                                     </a>
+                                    @can('emitir-comprobantes')
+                                        @if($sale->estado !== 'anulada' && in_array($sale->estado_sunat, ['pendiente', 'error']))
+                                            <form method="POST" action="{{ route('comprobantes.enviar', $sale) }}" class="inline"
+                                                  onsubmit="return confirmEnviar(this, '{{ $sale->serie }}-{{ $sale->correlativo }}')">
+                                                @csrf
+                                                <button type="submit"
+                                                        class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-xs"
+                                                        title="Emitir comprobante a SUNAT">
+                                                    {{ $sale->estado_sunat === 'error' ? 'Reenviar a SUNAT' : 'Enviar a SUNAT' }}
+                                                </button>
+                                            </form>
+                                        @endif
+                                    @endcan
                                     @can('anular-ventas')
                                         @if($sale->estado !== 'anulada')
                                             @php
@@ -191,8 +253,9 @@
                                                     data-id="{{ $sale->id }}"
                                                     data-total="{{ $sale->total }}"
                                                     data-sale="{{ $sale->id }}"
+                                                    data-emitido="{{ $sale->estado_sunat === 'aceptado' ? '1' : '0' }}"
                                                     class="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors text-xs"
-                                                    title="Anular venta y enviar nota de crédito a SUNAT">
+                                                    title="{{ $sale->estado_sunat === 'aceptado' ? 'Anular venta y enviar nota de crédito a SUNAT' : 'Anular venta (no se emitirá a SUNAT)' }}">
                                                     Anular
                                                 </button>
                                             @else
@@ -232,7 +295,7 @@
                         <p class="text-sm text-gray-500 mb-6">
                             ¿Anular el comprobante con total S/<span id="anularTotal" class="font-semibold"></span>?
                             <br>
-                            <span class="text-orange-600">Se enviará nota de crédito a SUNAT.</span>
+                            <span id="anularAviso" class="text-orange-600">Se enviará nota de crédito a SUNAT.</span>
                         </p>
                         <div class="flex gap-3 justify-center">
                             <button id="confirmAnular" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center gap-2">
@@ -260,11 +323,39 @@
     </form>
 
     <script>
+        function confirmEnviar(form, numero) {
+            if (!confirm(`¿Enviar el comprobante ${numero} a SUNAT?`)) {
+                return false;
+            }
+            const button = form.querySelector('button');
+            button.disabled = true;
+            button.classList.add('opacity-50', 'cursor-not-allowed');
+            button.textContent = 'Enviando...';
+            return true;
+        }
+
+        function confirmEnviarPendientes(form, total) {
+            const lote = Math.min(total, 50);
+            const aviso = total > 50 ? `\nSe enviarán los primeros ${lote}; luego vuelva a pulsar para continuar.` : '';
+            if (!confirm(`¿Enviar ${total} comprobante(s) pendiente(s) a SUNAT?${aviso}`)) {
+                return false;
+            }
+            const button = form.querySelector('button');
+            button.disabled = true;
+            button.classList.add('opacity-50', 'cursor-not-allowed');
+            button.textContent = `Enviando ${lote} comprobante(s)... no cierre la página`;
+            return true;
+        }
+
         function confirmAnular(button) {
             const id = button.getAttribute('data-id');
             const total = button.getAttribute('data-total');
             const saleId = button.getAttribute('data-sale');
+            const emitido = button.getAttribute('data-emitido') === '1';
             document.getElementById('anularTotal').textContent = total;
+            document.getElementById('anularAviso').textContent = emitido
+                ? 'Se enviará nota de crédito a SUNAT.'
+                : 'El comprobante no fue emitido a SUNAT; no se enviará.';
             document.getElementById('anularModal').classList.remove('hidden');
 
             document.getElementById('confirmAnular').onclick = function() {

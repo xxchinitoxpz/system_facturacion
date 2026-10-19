@@ -79,7 +79,7 @@
                 <!-- Información de SUNAT (solo para boletas y facturas) -->
                 @if(in_array(strtolower($sale->tipo_comprobante), ['boleta', 'factura']))
                     @php
-                        $sunatResponse = \App\Models\SunatResponse::where('venta_id', $sale->id)->first();
+                        $sunatResponse = \App\Models\SunatResponse::where('venta_id', $sale->id)->latest('id')->first();
                     @endphp
                     @if($sunatResponse)
                         <div class="bg-gray-50 p-4 rounded-lg">
@@ -135,7 +135,13 @@
                     @else
                         <div class="bg-yellow-50 p-4 rounded-lg">
                             <h2 class="text-lg font-semibold text-yellow-800 mb-4">Información de SUNAT</h2>
-                            <p class="text-sm text-yellow-700">No se encontró información de envío a SUNAT para esta {{ $sale->tipo_comprobante }}.</p>
+                            <p class="text-sm text-yellow-700">
+                                @if($sale->estado_sunat === 'anulado')
+                                    Comprobante {{ $sale->serie }}-{{ $sale->correlativo }} anulado antes de emitirse; no se envía a SUNAT.
+                                @else
+                                    Comprobante {{ $sale->serie }}-{{ $sale->correlativo }} pendiente de envío a SUNAT. Se envía desde el módulo de Comprobantes.
+                                @endif
+                            </p>
                         </div>
                     @endif
                 @endif

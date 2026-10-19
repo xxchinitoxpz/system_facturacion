@@ -20,6 +20,7 @@ class ComprobanteController extends Controller
             $user = auth()->user();
             $search = $request->input('search');
             $estado = $request->input('estado');
+            $estado_sunat = $request->input('estado_sunat');
             $tipo_comprobante = $request->input('tipo_comprobante');
             $cliente_id = $request->input('cliente_id');
             $sucursal_id = $request->input('sucursal_id');
@@ -44,6 +45,7 @@ class ComprobanteController extends Controller
                     });
                 })
                 ->when($estado, fn ($query) => $query->where('estado', $estado))
+                ->when($estado_sunat, fn ($query) => $query->where('estado_sunat', $estado_sunat))
                 ->when($tipo_comprobante, fn ($query) => $query->where('tipo_comprobante', $tipo_comprobante))
                 ->when($cliente_id, fn ($query) => $query->where('cliente_id', $cliente_id))
                 ->when($sucursal_id, fn ($query) => $query->where('sucursal_id', $sucursal_id))
@@ -54,10 +56,24 @@ class ComprobanteController extends Controller
                 ->paginate(10)
                 ->withQueryString();
 
+            $totalPendientes = Sale::query()
+                ->whereIn('tipo_comprobante', ['boleta', 'factura'])
+                ->whereIn('estado_sunat', ['pendiente', 'error'])
+                ->where('estado', '!=', 'anulada')
+                ->when($user->sucursal_id ?? $sucursal_id, fn ($query, $id) => $query->where('sucursal_id', $id))
+                ->count();
+
             $clients = Client::where('activo', true)->orderBy('nombre_completo')->get();
             $branches = Branch::orderBy('nombre')->get();
             $estados = ['completada', 'anulada', 'pendiente'];
             $tipos = ['boleta', 'factura'];
+            $estadosSunat = [
+                'pendiente' => 'Pendiente de envío',
+                'aceptado' => 'Aceptado',
+                'rechazado' => 'Rechazado',
+                'error' => 'Error de envío',
+                'anulado' => 'Anulado sin emitir',
+            ];
 
             return view('web.comprobantes.index', compact(
                 'sales',
@@ -65,8 +81,11 @@ class ComprobanteController extends Controller
                 'clients',
                 'branches',
                 'estados',
+                'estadosSunat',
+                'totalPendientes',
                 'tipos',
                 'estado',
+                'estado_sunat',
                 'tipo_comprobante',
                 'cliente_id',
                 'sucursal_id',

@@ -79,6 +79,11 @@
                                    class="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500 focus:ring-2">
                             <span class="ml-2 text-sm font-medium text-gray-700">Ver Comprobantes</span>
                         </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" name="permissions[]" value="emitir-comprobantes"
+                                   class="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500 focus:ring-2">
+                            <span class="ml-2 text-sm font-medium text-gray-700">Enviar Comprobantes a SUNAT</span>
+                        </label>
                     </div>
                 </div>
 
